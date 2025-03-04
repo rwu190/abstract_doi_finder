@@ -301,8 +301,8 @@ public class AbstractDoiFinder {
 
    public static XSSFWorkbook ShiftColumns(XSSFWorkbook wb) throws Exception {
       int startingSheet = 0; // This is bad practise: We're assuming that the sheets starting with the 0 (included) needs to be shifted
-      int abstractColumn = 0, doiColumn = 0; // Initializing the values for the columns, it throws an error otherwise. (title should be part of the general format, although it will most likely be there anyway)
-      boolean hasAbstractColumn = false, hasDOIColumn = false, hasTitle = false; // If the sheet has a column, we do not want to add another one of the same type
+      int abstractColumn = 0, doiColumn = 0, meshColumn = 0; // Initializing the values for the columns, it throws an error otherwise. (title should be part of the general format, although it will most likely be there anyway)
+      boolean hasAbstractColumn = false, hasDOIColumn = false, hasMeshColumn, hasTitle = false; // If the sheet has a column, we do not want to add another one of the same type
 
       /* 
         Loops through every sheet of the workbook to see if an abstract or doi column already exists.
@@ -317,6 +317,8 @@ public class AbstractDoiFinder {
          hasTitle = false;
          hasAbstractColumn = false;
          hasDOIColumn = false; // resets the boolean values back to false before switching to the next sheet
+         hasMeshColumn = false;
+
          Sheet sheet = wb.getSheetAt(sn);
          int noOfColumns;
          if (sheet == null || 
@@ -342,11 +344,14 @@ public class AbstractDoiFinder {
                   hasTitle = true;
                   abstractColumn = i + 1;
                   doiColumn = i + 2; // updates the values of where the columns should be since we are putting it after the title.
+                  meshColumn = i + 3; // ensures each index is consecutive (so it goes title, abstract, doi, mesh terms)
                }
                if (cellValue.toLowerCase().equals("abstract") || cellValue.toLowerCase().equals("abstracts"))
                   hasAbstractColumn = true;
                if (cellValue.toLowerCase().equals("doi") || cellValue.toLowerCase().equals("dois"))
                   hasDOIColumn = true;
+               if (cellValue.toLowerCase().equals("mesh") || cellValue.toLowerCase().equals("mesh terms"));
+                  hasMeshColumn = true;
             }
          }
          if (Boolean.TRUE.equals(hasTitle))
@@ -382,6 +387,21 @@ public class AbstractDoiFinder {
             }
             else
                System.out.println("A DOI column already existed for the " + sheet.getSheetName() + " sheet.");
+            if (Boolean.FALSE.equals(hasMeshColumn) && sheet.getRow(0).getCell(meshColumn) != null && sheet.getRow(0).getCell(meshColumn).getCellType() != CellType.BLANK)
+            {
+               sheet.shiftColumns(meshColumn, noOfColumns, 1);
+               sheet.getRow(0).createCell(meshColumn, CellType.STRING).setCellStyle(sheet.getRow(0).getCell(0).getCellStyle());
+               sheet.getRow(0).getCell(meshColumn).setCellValue("Mesh Terms"); // Add desired attribute name, generic label for our program "Mesh Terms"
+               System.out.println("A Mesh Terms column has been inserted for the sheet " + sheet.getSheetName() + " since it had a title column");
+            }
+            else if (Boolean.FALSE.equals(hasMeshColumn))
+            {
+               sheet.getRow(0).createCell(meshColumn, CellType.STRING).setCellStyle(sheet.getRow(0).getCell(0).getCellStyle());
+               sheet.getRow(0).getCell(meshColumn).setCellValue("Mesh Terms"); // Add desired attribute name, generic label for our program "Mesh Terms"
+               System.out.println("A Mesh Terms column has been inserted for the sheet " + sheet.getSheetName() + " since it had a title column");
+            }
+            else
+               System.out.println("A Mesh Terms column already existed for the " + sheet.getSheetName() + " sheet.");
          }  
       }
       return wb;
@@ -397,13 +417,19 @@ public class AbstractDoiFinder {
 
       String abstracttext = " "; // Will be overwritten by the abstract if we succeed.
       
-      String doiText = " "; // Will be overwritten by the DOI if we succeed
+      String doiText = " "; // Will be overwritten by the DOI if we succeed.
+
+      String meshText = " ";
+
+      StringBuilder sb = new StringBuilder(""); // Will be overwritten by a list of MeSH terms if we succeed.
       
       Document doc; // creates a new Document object that we will use to extract the html page and then extract the abstract text
       
       ArrayList<String> abstractList = new ArrayList<String>(); // creates a list that we will store our abstracts in
       
       ArrayList<String> doiList = new ArrayList<String>(); // creates a list to store the doi in
+
+      ArrayList<String> meshList = new ArrayList<String>(); // creates a list to store the MeSH terms in
       
       ArrayList<ArrayList<String>> returnedList = new ArrayList<ArrayList<String>>();
 
@@ -413,7 +439,7 @@ public class AbstractDoiFinder {
          return returnedList;
       }
       
-      boolean hasAbstract = false, hasDOI = false; //declares and initializes them
+      boolean hasAbstract = false, hasDOI = false, hasMesh = false; //declares and initializes them
       
       try 
       {
@@ -432,11 +458,13 @@ public class AbstractDoiFinder {
                
                hasAbstract = false; //resets them for each loop in case they got set to true
                hasDOI = false;
+               hasMesh = false;
                
                if (searchFor.get(i).toLowerCase().equals("no need to search"))
                {
                   abstractList.add("skip when writing");
                   doiList.add("skip when writing");
+                  meshList.add("skip when writing");
                   continue;
                } 
 
@@ -458,6 +486,8 @@ public class AbstractDoiFinder {
                Element abstractelement = doc.selectFirst("#abstract p");
                
                Element doiElement = doc.selectFirst("span.identifier.doi a");
+
+               Element meshElement = doc.selectFirst("div#mesh-terms ul.keywords-list");
                
                abstracttext = abstractelement.text(); // gets only the text of the abstract from the paragraph (<p>) HTML element
                // For more info: https://jsoup.org/apidocs/org/jsoup/nodes/Element.html#text(java.lang.String)
@@ -471,6 +501,24 @@ public class AbstractDoiFinder {
                doiList.add(doiText);
                
                hasDOI = true; //if we make it to this part, we will have a DOI (no exception thrown)
+
+               Elements meshItems = doc.select("li");
+
+               for (Element item : meshItems)
+               {
+                  Element term = item.selectFirst("button.keyword-actions-trigger");
+                  if (term != null)
+                  {
+                     sb.append(term.text().trim() + ",");
+                  }
+               }
+
+               if (sb.length() > 0) // if the StringBuilder is not empty
+                  sb.setLength(sb.length() - 1); // removes the comma at the end
+
+               meshText = sb.toString();
+
+               meshList.add(meshText);
                
             }
             catch (NullPointerException npe) { //need to implement the boolean checking 
@@ -487,17 +535,37 @@ public class AbstractDoiFinder {
                   try 
                   {
                      doiText = RetrieveDOI(searchString);
+                     meshText = RetrieveMesh(searchString);
                   }
                   catch (Exception e)
                   {
                      e.printStackTrace();
                   }
                   doiList.add(doiText);
+                  meshList.add(meshText);
                }
                if (Boolean.FALSE.equals(hasDOI) && hasAbstract) // the abstractList will already have the abstract so you do not want to double add it to the list
                {
                   doiText = "no doi on pubmed";
                   doiList.add(doiText);
+               }
+               /*
+                * 8 Cases: 
+                1. Has Abstract, Has DOI, Has Mesh Terms
+                2. No Abstract, Has DOI, Has Mesh Terms
+                3. No Abstract, No DOI, Has Mesh Terms
+                4. No Abstract, No DOI, No Mesh Terms
+                5. Has Abstract, No DOI, Has Mesh Terms
+                6. Has Abstract, No DOI, No Mesh Terms
+                7. No Abstract, Has DOI, No Mesh Terms
+                8. Has Abstract, Has DOI, No Mesh Terms
+
+                Really Just Trying to Make Sure it works right now
+                */
+               if (Boolean.FALSE.equals(hasMesh) && hasAbstract && hasDOI) // need to think through the logic a bit more, more edge cases now (described above)
+               {
+                  meshText = "no mesh terms on pubmed";
+                  meshList.add(meshText);
                }
             }
             catch (MalformedURLException mue) {
@@ -506,18 +574,22 @@ public class AbstractDoiFinder {
                abstractList.add(abstracttext);
                doiText = "error";
                doiList.add(doiText);
+               meshText = "error";
+               meshList.add(meshText);
             }
          }
       } catch (IOException e) {
          e.printStackTrace();
       }
-      int count = 0, doiCount = 0;
+      int count = 0, doiCount = 0, meshCount = 0;
       for (int k = 0; k < abstractList.size(); k++)
       {
          if (abstractList.get(k).toLowerCase().equals("no abstract on pubmed"))
             count++;
          if (doiList.get(k).toLowerCase().equals("no doi on pubmed"))
             doiCount++;
+         if (meshList.get(k).toLowerCase().equals("no mesh term on pubmed"))
+            meshCount++;
       }
       /* 
        * We now display information about the doi / abstract found.
@@ -527,9 +599,12 @@ public class AbstractDoiFinder {
       System.out.println("Number of publications that had an abstract for the sheet with the author \'" + searchFor.get(0) + "\'' on PubMed: " + (abstractList.size() - count) + "/" + abstractList.size());
       // System.out.println("Number of publications that did not have a DOI for the sheet with the author \'" + searchFor.get(0) + "\' on PubMed: " + doiCount + "/" + doiList.size());
       System.out.println("Number of publications that had a DOI for the sheet with the author \'" + searchFor.get(0) + "\' on PubMed: " + (doiList.size() - doiCount) + "/" + doiList.size());
+      // System.out.println("Number of publications that did not had mesh terms for the sheet with the author \'" + searchFor.get(0) + "\' on PubMed: " + meshCount + "/" + meshList.size());
+      System.out.println("Number of publications that had mesh terms for the sheet with the author \'" + searchFor.get(0) + "\' on PubMed: " + (meshList.size() - meshCount) + "/" + meshList.size());
       
       returnedList.add(abstractList);
       returnedList.add(doiList);
+      returnedList.add(meshList);
       
       return returnedList;
    }
@@ -538,7 +613,7 @@ public class AbstractDoiFinder {
       
       ArrayList<String> searchList = new ArrayList<String>();
 
-      int abstractIndex = 0, doiIndex = 0; // will keep track of the indices of the abstract and DOI columns, needs to be initializing or it throws an error with Maven.
+      int abstractIndex = 0, doiIndex = 0, meshIndex = 0; // will keep track of the indices of the abstract and DOI columns, needs to be initializing or it throws an error with Maven.
       // However, initializing it does not matter, since it will be overwritten, since every sheet with a title will have an abstract and DOI.
       // and if a sheet does not have a title, it will be skipped over.
       
@@ -577,9 +652,11 @@ public class AbstractDoiFinder {
             if (cellValue.toLowerCase().equals("title") || cellValue.toLowerCase().equals("titles"))
                hasTitle = true;
             if (cellValue.toLowerCase().equals("abstract") || cellValue.toLowerCase().equals("abstracts"))
-               abstractIndex = i; // not working for every sheet for some reason.
+               abstractIndex = i; // an abstract column exists, so we keep track of its index
             if (cellValue.toUpperCase().equals("DOI") || cellValue.toUpperCase().equals("DOIS"))
-               doiIndex = i;
+               doiIndex = i; // a doi column exists, so we keep track of its index
+            if (cellValue.toLowerCase().equals("mesh") || cellValue.toLowerCase().equals("mesh terms"))
+               meshIndex = i; // a mesh terms column exists, so we keep track of its index
          }
       }
 
@@ -593,7 +670,7 @@ public class AbstractDoiFinder {
             // This is only intended for the titles of each column in our target excel file, since we will not need data from any other column
 
             if (cell == null)
-               continue; // Well, we don't actually throw an error. Why not?
+               continue; // skips to the next column
                if (cell.getCellType() == CellType.STRING)
                {
                   String cellValue = cell.getStringCellValue().trim(); // gets the value of the cell if it is a string value
@@ -633,6 +710,8 @@ public class AbstractDoiFinder {
                            searchList.add(cellValue);
                         else if (Objects.isNull(row.getCell(doiIndex)) || row.getCell(abstractIndex).getCellType() == CellType.BLANK || cellValue.toLowerCase().equals("no doi on pubmed")) // when it is null, the thing is skipped????????????
                            searchList.add(cellValue);
+                        else if (Objects.isNull(row.getCell(meshIndex)) || row.getCell(meshIndex).getCellType() == CellType.BLANK || cellValue.toLowerCase().equals("no mesh terms on pubmed")) 
+                           searchList.add(cellValue);
                         else 
                            searchList.add("no need to search");
                      }
@@ -661,6 +740,7 @@ public class AbstractDoiFinder {
 
          ArrayList<String> abstractList = writeList.get(0);
          ArrayList<String> doiList = writeList.get(1); 
+         ArrayList<String> meshList = writeList.get(2);
          FileInputStream fins = new FileInputStream(outputPath);
          XSSFWorkbook wb = new XSSFWorkbook(fins);
          if (wb.getNumberOfSheets() < sheetIndex){
@@ -715,6 +795,17 @@ public class AbstractDoiFinder {
                      }
                      row = sheet.getRow(0); //sets the row back to 0 after running
                   }
+                  if (valueOfCell.toLowerCase().equals("mesh") || valueOfCell.toLowerCase().equals("mesh terms"))
+                  {
+                     for (int k = 1; k <= rows; k++) {
+                        int meshIndex = k - 1;
+                        row = sheet.getRow(k);
+                        if (meshList.get(meshIndex).toLowerCase().equals("skip when writing"))
+                           continue;
+                        row.createCell(i, CellType.STRING).setCellValue(meshList.get(meshIndex));
+                     }
+                     row = sheet.getRow(0);
+                  }
                }
          }
          FileOutputStream fos = new FileOutputStream(outputPath);
@@ -743,5 +834,39 @@ public class AbstractDoiFinder {
          return doiText;
       }
       return doiText;
+   }
+
+   public static String RetrieveMesh(String search) throws Exception {
+      String searchString = search;
+      String meshTerm = "";
+      Document doc;
+      StringBuilder sb = new StringBuilder("");
+      try
+      {
+         doc = Jsoup.connect("https://pubmed.ncbi.nlm.nih.gov/?term=" + java.net.URLEncoder.encode(searchString, "UTF-8")).get();
+         Element keywordsList = doc.selectFirst("div#mesh-terms ul.keywords-list");
+         Elements meshTerms = keywordsList.select("li");
+
+         for (Element item : meshTerms)
+         {
+            Element term = item.selectFirst("button.keyword-actions-trigger");
+            if (term != null)
+            {
+               sb.append(term.text().trim() + ",");
+            }
+         }
+      }
+      catch (NullPointerException npe)
+      {
+         meshTerm = "no mesh terms on PubMed";
+         return meshTerm;
+      }
+
+      if (sb.length() > 0) // if the StringBuilder is not empty
+         sb.setLength(sb.length() - 1); // removes the comma at the end
+
+      meshTerm = sb.toString();
+
+      return meshTerm;
    }
 }
